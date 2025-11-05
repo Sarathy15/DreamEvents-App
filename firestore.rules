@@ -1,0 +1,70 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Common helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isCurrentUser(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function hasValidFields(requiredFields) {
+      return request.resource.data.keys().hasAll(requiredFields);
+    }
+
+    // Users collection rules
+    match /users/{userId} {
+      allow get: if isAuthenticated();
+      allow list: if isAuthenticated();
+      allow create: if isCurrentUser(userId);
+      allow update: if isCurrentUser(userId) || 
+        (isAuthenticated() && (
+          // Allow FCM token updates
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['fcmToken', 'notificationsEnabled', 'updatedAt', 'unreadNotifications', 'lastNotificationAt']) ||
+          // Allow profile updates
+          request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['profileImage', 'profileCompleted', 'businessName', 'name', 'location', 'locationData'])
+        ));
+    }
+
+    // Notifications collection rules
+    match /notifications/{notificationId} {
+      allow get, list: if isAuthenticated() && (
+        resource.data.recipientId == request.auth.uid ||
+        resource.data.senderId == request.auth.uid
+      );
+      allow create: if isAuthenticated() && 
+        hasValidFields(['recipientId', 'senderId', 'title', 'body', 'createdAt']) &&
+        request.resource.data.senderId == request.auth.uid;
+      allow update: if isAuthenticated() && (
+        resource.data.recipientId == request.auth.uid ||
+        resource.data.senderId == request.auth.uid
+      );
+    }
+
+    // Bookings collection rules
+    match /bookings/{bookingId} {
+      allow get, list: if isAuthenticated();
+      allow create: if isAuthenticated() &&
+        hasValidFields(['customerId', 'vendorId', 'serviceId', 'status']) &&
+        request.resource.data.customerId == request.auth.uid;
+      allow update: if isAuthenticated() && (
+        resource.data.customerId == request.auth.uid ||
+        resource.data.vendorId == request.auth.uid
+      );
+    }
+
+    // Services collection rules
+    match /services/{serviceId} {
+      allow get, list: if true;
+      allow create: if isAuthenticated() &&
+        hasValidFields(['vendorId', 'title', 'description', 'price']) &&
+        request.resource.data.vendorId == request.auth.uid;
+      allow update, delete: if isAuthenticated() &&
+        resource.data.vendorId == request.auth.uid;
+    }
+  }
+}
